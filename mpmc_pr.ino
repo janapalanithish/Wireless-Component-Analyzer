@@ -14,162 +14,216 @@ const char *password = "12345678";
 WebServer server(80);
 
 // Global State Variables
-String compType = "READY";
+String compType = "NONE";
 String compValue = "0.00";
 String compUnit = "---";
-String compStatus = "System Ready. Place component & trigger scan.";
-String compState = "Standby";
+String compStatus = "No component detected. Insert component to test.";
+String compState = "Idle";
 float nodeVoltage = 0.0;
 int rawADC = 0;
-int healthEff = 100;
-int signalStab = 100;
+int healthEff = 0;
+int signalStab = 0;
+
+void resetTestPins() {
+  pinMode(PIN_REF_1K, INPUT);
+  pinMode(PIN_REF_100K, INPUT);
+}
+
+void dischargeCapacitor() {
+  pinMode(PIN_REF_1K, OUTPUT);
+  digitalWrite(PIN_REF_1K, LOW);
+  delay(100);
+  resetTestPins();
+}
+
+float readADCVoltageFast() {
+  int adcVal = analogRead(PIN_ADC);
+  return (adcVal / 4095.0) * 3.3;
+}
 
 float readADCVoltage() {
   int sum = 0;
   for (int i = 0; i < 30; i++) {
     sum += analogRead(PIN_ADC);
-    delayMicroseconds(100);
+    delayMicroseconds(50);
   }
   rawADC = sum / 30;
   nodeVoltage = (rawADC / 4095.0) * 3.3;
   return nodeVoltage;
 }
 
-void performComponentScan() {
-  // Reset Pins to High Impedance
-  pinMode(PIN_REF_1K, INPUT);
-  pinMode(PIN_REF_100K, INPUT);
+void setNullState(String statusMsg) {
+  compType = "NONE";
+  compValue = "0.00";
+  compUnit = "---";
+  compStatus = statusMsg;
+  compState = "Unusable";
+  healthEff = 0;
+  signalStab = 0;
+  resetTestPins();
+}
 
-  // --- 1. SHORT / OPEN CHECK ---
+void performComponentScan() {
+  resetTestPins();
+  dischargeCapacitor();
+
+  // --- 1. SHORT & OPEN CIRCUIT CHECK (FLOAT PREVENTION) ---
+  // Drive 1K pin HIGH to measure node response
   pinMode(PIN_REF_1K, OUTPUT);
   digitalWrite(PIN_REF_1K, HIGH);
-  delay(10);
+  delay(15);
   float v1k = readADCVoltage();
 
-  if (v1k < 0.05) { // Direct Short Circuit
+  // Direct Short Circuit check
+  if (v1k < 0.04) {
     compType = "SHORT CIRCUIT";
     compValue = "0.00";
-    compUnit = "\xCE\xA9"; // Ohm symbol
-    compStatus = "CRITICAL FAULT: Direct Short Detected!";
-    compState = "Defective";
+    compUnit = "\xCE\xA9";
+    compStatus = "Defective Component: Direct Short! Cannot be used for experiments.";
+    compState = "Unusable";
     healthEff = 0;
-    signalStab = 10;
-    pinMode(PIN_REF_1K, INPUT);
+    signalStab = 0;
+    resetTestPins();
     return;
   }
 
-  if (v1k > 3.22) { // Open Circuit / Nothing Connected
-    compType = "OPEN CIRCUIT";
-    compValue = "INF";
-    compUnit = "---";
-    compStatus = "No component detected or leads disconnected.";
-    compState = "Idle";
-    healthEff = 100;
-    signalStab = 100;
-    pinMode(PIN_REF_1K, INPUT);
+  // Open Circuit or No Component Inserted
+  // If voltage floats near 3.3V or drops sharply when 100K is driven, it's open/missing
+  pinMode(PIN_REF_1K, INPUT);
+  pinMode(PIN_REF_100K, OUTPUT);
+  digitalWrite(PIN_REF_100K, HIGH);
+  delay(15);
+  float v100k = readADCVoltage();
+
+  if (v1k > 3.24 && v100k > 3.24) {
+    setNullState("No component detected or component is blown/open. CANNOT be used.");
     return;
   }
 
-  // --- 2. DIODE TEST ---
-  // A diode drops a fixed voltage (approx 0.4V - 0.8V for Silicon/Schottky)
-  if (v1k >= 0.3 && v1k <= 1.2) {
-    compType = "DIODE";
-    compValue = String(v1k, 2);
-    compUnit = "V";
-    compStatus = "Diode Detected (Forward Drop: " + String(v1k, 2) + "V)";
-    compState = "Functional";
-    healthEff = 98;
-    signalStab = 96;
-    pinMode(PIN_REF_1K, INPUT);
-    return;
-  }
+  // --- 2. CAPACITOR RC CHARGE TEST ---
+  dischargeCapacitor();
 
-  // --- 3. CAPACITOR RC CHARGE TEST ---
-  // Discharge capacitor first
-  pinMode(PIN_REF_1K, OUTPUT);
-  digitalWrite(PIN_REF_1K, LOW);
-  delay(50);
+  pinMode(PIN_REF_100K, OUTPUT);
+  digitalWrite(PIN_REF_100K, HIGH);
   
-  if (readADCVoltage() < 0.1) {
-    // Start Charging via 100k
-    pinMode(PIN_REF_1K, INPUT);
+  float vStart = readADCVoltageFast();
+  unsigned long startTime = micros();
+  
+  while ((micros() - startTime) < 400000) {
+    if (readADCVoltageFast() >= 2.08) break; // 63.2% of 3.3V (1 Tau)
+  }
+  unsigned long elapsedTime = micros() - startTime;
+  float vEnd = readADCVoltageFast();
+
+  resetTestPins();
+
+  // Dynamic capacitance test: Capacitors store charge continuously
+  if (elapsedTime > 400 && elapsedTime < 390000 && (vEnd - vStart) > 0.4) {
+    float capuF = ((float)elapsedTime / 100000.0);
+    compType = "CAPACITOR";
+    
+    if (capuF < 1.0) {
+      compValue = String(capuF * 1000.0, 1);
+      compUnit = "nF";
+    } else {
+      compValue = String(capuF, 2);
+      compUnit = "uF";
+    }
+    
+    // Efficiency calculation based on charge curve consistency
+    healthEff = 95;
+    compStatus = "Capacitor Pass: Charging curve stable. SAFE for experiments.";
+    compState = "Usable";
+    signalStab = 98;
+    dischargeCapacitor();
+    return;
+  }
+
+  // --- 3. DIODE TEST ---
+  dischargeCapacitor();
+
+  pinMode(PIN_REF_1K, OUTPUT);
+  digitalWrite(PIN_REF_1K, HIGH);
+  delay(15);
+  float vDiode1k = readADCVoltage();
+
+  pinMode(PIN_REF_1K, INPUT);
+  pinMode(PIN_REF_100K, OUTPUT);
+  digitalWrite(PIN_REF_100K, HIGH);
+  delay(15);
+  float vDiode100k = readADCVoltage();
+
+  // Diodes clamp voltage between 0.2V - 1.1V regardless of series resistance scaling
+  if (vDiode1k >= 0.22 && vDiode1k <= 1.15 && vDiode100k < 0.20) {
+    compType = "DIODE";
+    compValue = String(vDiode1k, 2);
+    compUnit = "V";
+    
+    // Evaluate efficiency based on normal silicon/schottky forward drop
+    if (vDiode1k >= 0.3 && vDiode1k <= 0.8) {
+      healthEff = 96;
+      compStatus = "Diode Pass (Forward Drop: " + String(vDiode1k, 2) + "V). SAFE for experiments.";
+      compState = "Usable";
+    } else {
+      healthEff = 45;
+      compStatus = "Diode Degraded (High drop: " + String(vDiode1k, 2) + "V). NOT recommended for experiments.";
+      compState = "Degraded";
+    }
+    signalStab = 94;
+    resetTestPins();
+    return;
+  }
+
+  // --- 4. RESISTOR TEST ---
+  resetTestPins();
+  pinMode(PIN_REF_1K, OUTPUT);
+  digitalWrite(PIN_REF_1K, HIGH);
+  delay(15);
+  float vMeas1k = readADCVoltage();
+
+  float resistance = 0.0;
+  if (vMeas1k < 2.95) {
+    resistance = (vMeas1k * 1000.0) / (3.3 - vMeas1k);
+  } else {
+    // High resistance range (100k reference)
+    resetTestPins();
     pinMode(PIN_REF_100K, OUTPUT);
     digitalWrite(PIN_REF_100K, HIGH);
+    delay(15);
+    float vMeas100k = readADCVoltage();
     
-    unsigned long startTime = micros();
-    while (readADCVoltage() < 2.08) { // 63.2% of 3.3V (1 Time Constant)
-      if (micros() - startTime > 1000000) break; // Timeout if it's a resistor
-    }
-    unsigned long elapsedTime = micros() - startTime;
-    
-    // If it took measurable time to charge, it's a capacitor!
-    if (elapsedTime > 200 && elapsedTime < 1000000) {
-      float capuF = ((float)elapsedTime / 100000.0); // C = tau / R
-      compType = "CAPACITOR";
-      
-      if (capuF < 1.0) {
-        compValue = String(capuF * 1000.0, 1);
-        compUnit = "nF";
-      } else {
-        compValue = String(capuF, 2);
-        compUnit = "\xC2\xB0F"; // uF formatting
-      }
-      
-      compStatus = "Capacitor Charging Curve Verified";
-      compState = "Healthy";
-      healthEff = 95;
-      signalStab = 98;
-      
-      // Discharge before exit
-      pinMode(PIN_REF_100K, INPUT);
-      pinMode(PIN_REF_1K, OUTPUT);
-      digitalWrite(PIN_REF_1K, LOW);
-      delay(20);
-      pinMode(PIN_REF_1K, INPUT);
+    if (vMeas100k < 3.18) {
+      resistance = (vMeas100k * 100000.0) / (3.3 - vMeas100k);
+    } else {
+      // Over range / invalid floating pin response
+      setNullState("No component detected or out of measurable range.");
       return;
     }
   }
 
-  // --- 4. RESISTOR TEST ---
-  // Low Range Test (1k)
-  pinMode(PIN_REF_100K, INPUT);
-  pinMode(PIN_REF_1K, OUTPUT);
-  digitalWrite(PIN_REF_1K, HIGH);
-  delay(10);
-  float vMeas = readADCVoltage();
+  // Validate resistance range (10 Ohm to 1M Ohm)
+  if (resistance >= 10.0 && resistance <= 1000000.0) {
+    compType = "RESISTOR";
+    if (resistance >= 1000000.0) {
+      compValue = String(resistance / 1000000.0, 2);
+      compUnit = "M\xCE\xA9";
+    } else if (resistance >= 1000.0) {
+      compValue = String(resistance / 1000.0, 2);
+      compUnit = "k\xCE\xA9";
+    } else {
+      compValue = String(resistance, 1);
+      compUnit = "\xCE\xA9";
+    }
 
-  float resistance = 0.0;
-  if (vMeas < 3.0) {
-    resistance = (vMeas * 1000.0) / (3.3 - vMeas);
+    healthEff = 98;
+    compStatus = "Resistor Functional: SAFE for circuit experiments.";
+    compState = "Usable";
+    signalStab = 99;
   } else {
-    // Switch to High Range Test (100k)
-    pinMode(PIN_REF_1K, INPUT);
-    pinMode(PIN_REF_100K, OUTPUT);
-    digitalWrite(PIN_REF_100K, HIGH);
-    delay(10);
-    vMeas = readADCVoltage();
-    resistance = (vMeas * 100000.0) / (3.3 - vMeas);
+    setNullState("Invalid component response. CANNOT be used.");
   }
 
-  compType = "RESISTOR";
-  if (resistance >= 1000000.0) {
-    compValue = String(resistance / 1000000.0, 2);
-    compUnit = "M\xCE\xA9";
-  } else if (resistance >= 1000.0) {
-    compValue = String(resistance / 1000.0, 2);
-    compUnit = "k\xCE\xA9";
-  } else {
-    compValue = String(resistance, 1);
-    compUnit = "\xCE\xA9";
-  }
-
-  compStatus = "Resistor Value Calculated";
-  compState = "Healthy";
-  healthEff = 99;
-  signalStab = 99;
-
-  pinMode(PIN_REF_1K, INPUT);
-  pinMode(PIN_REF_100K, INPUT);
+  resetTestPins();
 }
 
 void handleRoot() {
