@@ -1,0 +1,353 @@
+#ifndef INDEX_H
+#define INDEX_H
+
+const char MAIN_page[] PROGMEM = R"=====(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Advanced Component Analyzer</title>
+    <style>
+        :root {
+            --bg-color: #030712;
+            --card-bg: rgba(15, 23, 42, 0.85);
+            --border-color: rgba(56, 189, 248, 0.25);
+            --text-main: #f8fafc;
+            --text-sub: #94a3b8;
+            --success-color: #34d399;
+            --warning-color: #fbbf24;
+            --danger-color: #f87171;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 24px 16px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        #particle-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .glow-orb {
+            position: fixed;
+            width: 350px;
+            height: 350px;
+            border-radius: 50%;
+            filter: blur(90px);
+            opacity: 0.35;
+            z-index: 1;
+            pointer-events: none;
+            animation: orbFloat 10s ease-in-out infinite alternate;
+        }
+
+        .orb-1 { background: #0284c7; top: -50px; left: -50px; }
+        .orb-2 { background: #6366f1; bottom: -50px; right: -50px; animation-delay: -5s; }
+
+        @keyframes orbFloat {
+            0% { transform: translate(0, 0) scale(1); }
+            100% { transform: translate(60px, 40px) scale(1.2); }
+        }
+
+        .container {
+            position: relative;
+            z-index: 10;
+            width: 100%;
+            max-width: 480px;
+            background: var(--card-bg);
+            border-radius: 24px;
+            padding: 28px;
+            border: 1px solid var(--border-color);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.9), 0 0 25px rgba(56, 189, 248, 0.2);
+        }
+
+        .header { text-align: center; margin-bottom: 20px; }
+        .header h1 { font-size: 20px; font-weight: 700; color: var(--text-main); margin: 0 0 6px 0; }
+        .header p { font-size: 13px; color: var(--text-sub); margin: 0; }
+
+        .display-box {
+            background: linear-gradient(180deg, #0284c7 0%, #0369a1 100%);
+            border: 1px solid rgba(56, 189, 248, 0.4);
+            border-radius: 20px;
+            padding: 24px 20px;
+            text-align: center;
+            margin-bottom: 16px;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(2, 132, 199, 0.3);
+        }
+
+        .wave-container {
+            position: absolute; top: 0; left: 0; width: 200%; height: 100%;
+            pointer-events: none; z-index: 1; opacity: 0.35;
+        }
+
+        .wave {
+            position: absolute; width: 100%; height: 100%;
+            background-repeat: repeat-x; background-position: 0 bottom;
+            transform-origin: center bottom;
+        }
+
+        .wave1 {
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 120" preserveAspectRatio="none"><path d="M0,0 C150,90 350,-40 500,40 C650,120 900,10 1200,40 L1200,120 L0,120 Z" fill="%23ffffff"/></svg>');
+            animation: moveWave 8s linear infinite;
+        }
+
+        .wave2 {
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 120" preserveAspectRatio="none"><path d="M0,30 C200,-20 400,80 600,20 C800,-40 1000,60 1200,20 L1200,120 L0,120 Z" fill="%2338bdf8"/></svg>');
+            animation: moveWave 12s linear infinite reverse; opacity: 0.6;
+        }
+
+        @keyframes moveWave {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-50%); }
+        }
+
+        .box-content { position: relative; z-index: 2; }
+
+        .type-badge {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.2);
+            color: #ffffff;
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            padding: 5px 14px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            backdrop-filter: blur(4px);
+        }
+
+        .reading-container {
+            margin: 8px 0;
+            display: flex;
+            align-items: baseline;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .reading-value {
+            font-size: 46px;
+            font-weight: 800;
+            color: #ffffff;
+            line-height: 1;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .reading-unit {
+            font-size: 22px;
+            font-weight: 600;
+            color: #e0f2fe;
+        }
+
+        .status-text {
+            font-size: 13px;
+            color: #f0fdf4;
+            margin-top: 8px;
+            font-weight: 600;
+            text-shadow: 0 1px 4px rgba(0,0,0,0.4);
+        }
+
+        .action-btn {
+            width: 100%;
+            background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+            color: #ffffff;
+            border: 1px solid rgba(56, 189, 248, 0.4);
+            padding: 16px;
+            font-size: 15px;
+            font-weight: 700;
+            border-radius: 14px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 15px rgba(2, 132, 199, 0.4);
+            margin-bottom: 20px;
+        }
+
+        .action-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(56, 189, 248, 0.6); }
+        .action-btn:active { transform: scale(0.98); }
+
+        .grid-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+        .metric-card {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--border-color);
+            padding: 12px 14px;
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .metric-label { font-size: 11px; color: var(--text-sub); text-transform: uppercase; letter-spacing: 0.5px; }
+        .metric-value { font-size: 14px; font-weight: 600; color: var(--text-main); }
+
+        .health-good { color: var(--success-color); }
+        .health-warn { color: var(--warning-color); }
+        .health-fail { color: var(--danger-color); }
+    </style>
+</head>
+<body>
+    <canvas id="particle-canvas"></canvas>
+    <div class="glow-orb orb-1"></div>
+    <div class="glow-orb orb-2"></div>
+
+    <div class="container">
+        <div class="header">
+            <h1>Wireless Component Analyzer</h1>
+            <p>ESP32 Fault Diagnosis & Health Analysis</p>
+        </div>
+
+        <div class="display-box">
+            <div class="wave-container">
+                <div class="wave wave1"></div>
+                <div class="wave wave2"></div>
+            </div>
+
+            <div class="box-content">
+                <span class="type-badge" id="type">READY</span>
+                <div class="reading-container">
+                    <span class="reading-value" id="value">0.00</span>
+                    <span class="reading-unit" id="unit">---</span>
+                </div>
+                <div class="status-text" id="status">System Ready. Place component & trigger scan.</div>
+            </div>
+        </div>
+
+        <button class="action-btn" onclick="triggerScan()">RUN DIAGNOSTIC SCAN</button>
+
+        <div class="grid-metrics">
+            <div class="metric-card">
+                <span class="metric-label">Efficiency / Health</span>
+                <span class="metric-value health-good" id="eff">100%</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-label">Working State</span>
+                <span class="metric-value" id="state">Standby</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-label">Node Voltage</span>
+                <span class="metric-value" id="volt">0.00 V</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-label">ADC Raw Sample</span>
+                <span class="metric-value" id="adc">0</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-label">Signal Stability</span>
+                <span class="metric-value" id="stab">100%</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-label">Access IP</span>
+                <span class="metric-value">192.168.4.1</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('particle-canvas');
+        const ctx = canvas.getContext('2d');
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        const particles = [];
+        for (let i = 0; i < 45; i++) {
+            particles.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                radius: Math.random() * 2 + 1,
+                vx: (Math.random() - 0.5) * 0.8,
+                vy: (Math.random() - 0.5) * 0.8,
+                alpha: Math.random() * 0.5 + 0.2
+            });
+        }
+
+        function animateParticles() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            for (let i = 0; i < particles.length; i++) {
+                for (let j = i + 1; j < particles.length; j++) {
+                    const dx = particles[i].x - particles[j].x;
+                    const dy = particles[i].y - particles[j].y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < 120) {
+                        ctx.beginPath();
+                        ctx.strokeStyle = `rgba(56, 189, 248, ${0.15 * (1 - dist / 120)})`;
+                        ctx.lineWidth = 1;
+                        ctx.moveTo(particles[i].x, particles[i].y);
+                        ctx.lineTo(particles[j].x, particles[j].y);
+                        ctx.stroke();
+                    }
+                }
+            }
+            particles.forEach(p => {
+                p.x += p.vx; p.y += p.vy;
+                if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
+                if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(56, 189, 248, ${p.alpha})`;
+                ctx.shadowBlur = 8; ctx.shadowColor = '#38bdf8';
+                ctx.fill(); ctx.shadowBlur = 0;
+            });
+            requestAnimationFrame(animateParticles);
+        }
+        animateParticles();
+
+        function updateData() {
+            fetch('/data').then(res => res.json()).then(data => {
+                document.getElementById('type').innerText = data.type;
+                document.getElementById('value').innerText = data.value;
+                document.getElementById('unit').innerText = data.unit;
+                document.getElementById('status').innerText = data.status;
+                document.getElementById('volt').innerText = data.voltage + ' V';
+                document.getElementById('adc').innerText = data.adc;
+                document.getElementById('eff').innerText = data.eff + '%';
+                document.getElementById('state').innerText = data.state;
+                document.getElementById('stab').innerText = data.stab + '%';
+
+                const effEl = document.getElementById('eff');
+                if (data.eff > 85) {
+                    effEl.className = "metric-value health-good";
+                } else if (data.eff > 50) {
+                    effEl.className = "metric-value health-warn";
+                } else {
+                    effEl.className = "metric-value health-fail";
+                }
+            });
+        }
+
+        function triggerScan() {
+            fetch('/scan').then(() => updateData());
+        }
+
+        setInterval(updateData, 2000);
+    </script>
+</body>
+</html>
+)=====";
+
+#endif
